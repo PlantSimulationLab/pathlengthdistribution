@@ -1,13 +1,7 @@
 import os
-
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-mpl.use('macosx')
 import numpy as np
 from numpy import sqrt, sin, arcsin, cos, arccos, exp, pi, linspace, ceil
 from plyfile import PlyData, PlyElement
-
-plt.rcParams['text.usetex'] = True
 
 
 def intersectBBox(ox, oy, oz, dx, dy, dz, sizex, sizey, sizez):
@@ -317,7 +311,7 @@ def intersectPolymesh(ox, oy, oz, dx, dy, dz, sizex, sizey, sizez, plydata):
         return 0
 
 
-def pathlengthdistribution(shape, sizex, sizey, sizez, ray_zenith, ray_azimuth, nrays, plyfile=''):
+def pathlengths(shape, scale_x, scale_y, scale_z, ray_zenith, ray_azimuth, nrays, plyfile='', outputfile=''):
 
     kEpsilon = 1e-5
 
@@ -349,9 +343,9 @@ def pathlengthdistribution(shape, sizex, sizey, sizez, ray_zenith, ray_azimuth, 
         z_min = 1e6
         z_max = -1e6
         for vert in range(0, Nvertices):
-            vx = vertices[vert][0]*sizex
-            vy = vertices[vert][1]*sizey
-            vz = vertices[vert][2]*sizez
+            vx = vertices[vert][0] * scale_x
+            vy = vertices[vert][1] * scale_y
+            vz = vertices[vert][2] * scale_z
             if vx < bx_min:
                 bx_min = vx
             if vx > bx_max:
@@ -369,10 +363,10 @@ def pathlengthdistribution(shape, sizex, sizey, sizez, ray_zenith, ray_azimuth, 
         z_min = z_min
         z_max = z_max * (1.0 + kEpsilon)
     else:
-        bbox_sizex = sizex * (1.0 + kEpsilon)
-        bbox_sizey = sizey * (1.0 + kEpsilon)
+        bbox_sizex = scale_x * (1.0 + kEpsilon)
+        bbox_sizey = scale_y * (1.0 + kEpsilon)
         z_min = 0
-        z_max = sizez * (1.0 + kEpsilon)
+        z_max = scale_z * (1.0 + kEpsilon)
 
     sx = bbox_sizex/N
     sy = bbox_sizey/N
@@ -392,13 +386,13 @@ def pathlengthdistribution(shape, sizex, sizey, sizez, ray_zenith, ray_azimuth, 
 
                 # Intersect shape
                 if shape == 'prism':
-                    dr, _, _, _, = intersectBBox(ox, oy, oz, dx, dy, dz, sizex, sizey, sizez)
+                    dr, _, _, _, = intersectBBox(ox, oy, oz, dx, dy, dz, scale_x, scale_y, scale_z)
                 elif shape == 'ellipsoid':
-                    dr = intersectEllipsoid(ox, oy, oz, dx, dy, dz, sizex, sizey, sizez)
+                    dr = intersectEllipsoid(ox, oy, oz, dx, dy, dz, scale_x, scale_y, scale_z)
                 elif shape == 'cylinder':
-                    dr = intersectCylinder(ox, oy, oz, dx, dy, dz, sizex, sizey, sizez)
+                    dr = intersectCylinder(ox, oy, oz, dx, dy, dz, scale_x, scale_y, scale_z)
                 elif shape == 'polymesh':
-                    dr = intersectPolymesh(ox, oy, oz, dx, dy, dz, sizex, sizey, sizez, plydata)
+                    dr = intersectPolymesh(ox, oy, oz, dx, dy, dz, scale_x, scale_y, scale_z, plydata)
                 else:
                     raise Exception('Invalid shape argument.')
 
@@ -425,4 +419,16 @@ def pathlengthdistribution(shape, sizex, sizey, sizez, ray_zenith, ray_azimuth, 
 
             path_length[i+j*N] = dr
 
+
+    if( outputfile != '' ):
+        np.savetxt(outputfile, path_length, delimiter=',')
+
     return path_length[path_length > kEpsilon]
+
+def pathlengthdistribution(shape, scale_x, scale_y, scale_z, ray_zenith, ray_azimuth, nrays, plyfile='', bins=10, normalize=True):
+
+    path_lengths = pathlengths(shape, scale_x, scale_y, scale_z, ray_zenith, ray_azimuth, nrays, plyfile)
+
+    hist, bin_edges = np.histogram(path_lengths, bins=bins, density=normalize)
+
+    return hist, bin_edges
