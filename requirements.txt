@@ -1,3 +1,5 @@
-os
 numpy
 plyfile
+numba
+scipy
+matplotlib
