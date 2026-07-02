@@ -1220,60 +1220,17 @@ def crown_volume(shape, scale_x, scale_y, scale_z, plyfile=''):
     return float(abs(signed_six.sum()) / 6.0)
 
 
-def _crown_perp_width(shape, scale_x, scale_y, azimuth, plyfile=''):
-    r"""Full crown width perpendicular to the beam's horizontal azimuth (m).
-
-    This is the crown's cross-beam extent -- the ``w_perp`` used to set the
-    canopy interception ceiling.  ``azimuth`` is the beam azimuth in the crown
-    frame (radians, measured from +x, same convention as :func:`pathlengths`).
-    """
-    sa, ca = abs(sin(azimuth)), abs(cos(azimuth))
-    if shape == 'prism':
-        # Support width of the box footprint perpendicular to the beam.
-        return scale_x * sa + scale_y * ca
-    if shape in ('ellipsoid', 'cylinder'):
-        # Support width of the (elliptical) horizontal cross-section.
-        Rx, Ry = 0.5 * scale_x, 0.5 * scale_y
-        return 2.0 * sqrt(Rx * Rx * sa * sa + Ry * Ry * ca * ca)
-    # polymesh: perpendicular extent of the scaled vertices onto n=(-sin,cos).
-    plydata = PlyData.read(plyfile)
-    verts = plydata.elements[0].data
-    vx = np.asarray(verts['x'], dtype=float) * scale_x
-    vy = np.asarray(verts['y'], dtype=float) * scale_y
-    proj = -vx * sin(azimuth) + vy * cos(azimuth)
-    return float(proj.max() - proj.min())
-
-
 def canopy_interception(Gtheta, LAD, shape, scale_x, scale_y, scale_z,
                         ray_zenith, ray_azimuth, nrays, sr, sp, phi=None,
                         path_multiplier=1.0, absorptivity=1.0,
                         plyfile='', degrees=False, P_leaf=None):
-    r"""Canopy-level binomial interception probability (closure-corrected).
+    r"""Canopy-level binomial interception probability (Bailey et al. 2020).
 
     .. math::
-        N_c &= S(\theta,\phi) / S(0) \\
-        C &= \min\!\left(1,\; w_\perp / s_\perp\right),\quad
-            s_\perp = s_r \cos^2\phi + s_p \sin^2\phi \\
-        P_c &= C\left[1 - \left(1 - \frac{S(0)}{C\, s_r s_p}
-            P_{\mathrm{leaf}}\right)^{N_c}\right]
-
-    This is the Bailey et al. (2020) binomial (Eq. 13) with a corrected
-    saturation ceiling.  The published form pre-multiplies by ``s^2/(s_r s_p)``
-    with ``s = s_r sin^2(phi) + s_p cos^2(phi)``, which pins ``P_c`` at an
-    azimuth-dependent geometric ceiling ``s_p/s_r`` (at ``phi=0``); against an
-    independent 3-D reference that ceiling is too low for a *closed* canopy
-    (crowns that fill the cell should intercept ~all light at grazing) and lets
-    ``P_c`` overshoot when ``s_r < s_p``.
-
-    Here the ceiling is instead the fraction of the beam cross-section the row
-    geometry can block -- the crown cross-beam width ``w_perp`` over the
-    perpendicular spacing ``s_perp`` -- and the footprint normalization is
-    carried inside the per-layer cover so the ceiling ``C`` does not disturb the
-    (validated) sparse limit ``P_c -> S(theta) P_leaf/(s_r s_p)``.  The nadir
-    limit (``N_c=1``) stays exact at ``S(0) P_leaf/(s_r s_p)``, and the model
-    reduces to Eq. 13 in the open-canopy (sparse) regime.  Row-induced
-    azimuthal anisotropy is retained -- it enters through ``C`` (via ``w_perp``,
-    ``s_perp``) and through the azimuth-aware ``S(theta, phi)``.
+        s &= s_r \sin^2\phi + s_p \cos^2\phi \\
+        N_c &= S(\theta) / S(0) \\
+        P_c &= \frac{s^2}{s_r s_p}
+            \left[1 - \left(1 - \frac{S(0)}{s^2} P_{\mathrm{leaf}}\right)^{N_c}\right]
 
     Parameters
     ----------
@@ -1312,23 +1269,24 @@ def canopy_interception(Gtheta, LAD, shape, scale_x, scale_y, scale_z,
                              nrays=nrays, plyfile=plyfile)
     Nc = Stheta / S0
 
-    # Closure-corrected ceiling: the maximum interception the row geometry can
-    # produce for this beam is the crown cross-beam width w_perp over the
-    # perpendicular spacing s_perp (both azimuth-dependent).  w_perp is a crown
-    # property (beam azimuth in the crown frame); s_perp is a lattice property
-    # (beam azimuth relative to the rows).
-    w_perp = _crown_perp_width(shape, scale_x, scale_y, azimuth, plyfile)
-    s_perp = sr * cos(phi) ** 2 + sp * sin(phi) ** 2
-    C = min(1.0, w_perp / s_perp) if s_perp > 0.0 else 1.0
-    if C <= 0.0:
-        return 0.0
-
-    # Per-layer cover in the ceiling-scaled cell, pinned by the sparse limit so
-    # C does not perturb it; compounded over Nc crown layers, then scaled to C.
-    # At Nc=1 this is the exact nadir cover S(0) P_leaf/(sr sp); as Nc grows the
-    # bracket saturates and P_c -> C.
-    base = max(0.0, 1.0 - (S0 / (C * sr * sp)) * P_leaf)
-    Pc = C * (1.0 - base ** Nc)
+    s = sr * sin(phi) ** 2 + sp * cos(phi) ** 2
+    inner = 1.0 - (S0 / s ** 2) * P_leaf
+    # ``inner`` is the per-crown gap fraction within the directional sub-cell
+    # s^2.  It can go negative when a crown silhouette exceeds s^2 -- e.g. at
+    # phi=0 with sr != sp, where s = sp.  A negative base raised to the
+    # (generally non-integer) power Nc is undefined, so handle it explicitly
+    # rather than via ``inner ** Nc`` (numpy returns NaN even for Nc == 1.0):
+    if inner < 0.0:
+        # For a single crown layer (Nc == 1) the s^2 factors cancel
+        # analytically and Pc reduces to the exact geometric limit
+        # S(0) P_leaf / (sr sp); keep gap = inner (== inner**1) so that limit
+        # survives.  ``isclose`` tolerates Monte-Carlo noise in Nc for meshes.
+        # For Nc != 1 (oblique beams) this is the deep-overlap regime where the
+        # binomial breaks down; treat the gaps as closed (gap -> 0).
+        gap = inner if np.isclose(Nc, 1.0) else 0.0
+    else:
+        gap = inner ** Nc
+    Pc = (s ** 2 / (sr * sp)) * (1.0 - gap)
     return float(min(max(Pc, 0.0), 1.0))
 
 
