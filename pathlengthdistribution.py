@@ -1052,20 +1052,41 @@ def crownsunlitfraction(Gtheta, LAD, shape, scale_x, scale_y, scale_z,
 # ===========================================================================
 
 def silhouette_area(shape, scale_x, scale_y, scale_z, ray_zenith,
-                    nrays=10000, plyfile='', degrees=False):
-    r"""Crown silhouette area ``S(theta)`` normal to the beam (Bailey et al. 2020).
+                    ray_azimuth=0.0, nrays=10000, plyfile='', degrees=False):
+    r"""Crown horizontal ground-shadow area ``S(theta, phi)`` (Bailey et al. 2020;
+    Ponce de Leon et al. 2026, Table 2).
 
-    Analytic where possible:
+    This is the horizontal shadow the crown casts, matching the ``S(theta)`` used
+    by the canopy binomial model's ``Nc = S(theta)/S(0)`` -- **not** the
+    beam-normal silhouette (the two differ by a factor ``cos(theta)``).
 
-    * ellipsoid / sphere: ``pi R sqrt(R^2 cos^2 theta + b^2 sin^2 theta)``
-      (Norman & Welles 1983) with horizontal radius ``R = scale_x/2`` (assumes
-      ``scale_x == scale_y``) and vertical semi-axis ``b = scale_z/2``.  Reduces
-      to ``pi R^2`` at all angles for a sphere (``b = R``).
-    * cylinder: ``pi R^2 + 2 R H tan(theta)`` with ``R = scale_x/2``,
-      ``H = scale_z``.
+    The shadow depends on the beam **azimuth** ``ray_azimuth`` whenever the crown
+    is not horizontally circular (triaxial ellipsoid, elliptical cylinder,
+    prism, or a general mesh).  ``ray_azimuth`` is measured from the ``+x`` axis
+    in the same crown frame as the ray direction used by :func:`pathlengths` /
+    :func:`crown_interception` (``dx = sin(theta) cos(azimuth)``,
+    ``dy = sin(theta) sin(azimuth)``), so ``S(theta, phi)`` and the per-crown
+    ``P_leaf`` are evaluated for a consistent beam direction.  At ``theta = 0``
+    the shadow is azimuth-independent (``S(0) = `` the horizontal cross-section).
+
+    Analytic where possible (semi-axes ``Rx = scale_x/2``, ``Ry = scale_y/2``,
+    ``Rz = scale_z/2``; beam unit vector ``d = (sin th cos phi, sin th sin phi,
+    cos th)``):
+
+    * ellipsoid / sphere: the beam-normal silhouette of an ellipsoid is
+      ``pi sqrt(Rx^2 Ry^2 dz^2 + Ry^2 Rz^2 dx^2 + Rx^2 Rz^2 dy^2)`` and the
+      ground shadow is that divided by ``cos(theta) = dz``.  Reduces to
+      ``pi R^2/cos(theta)`` for a sphere and, for ``Rx == Ry == R``, ``Rz == V``,
+      to the Ponce de Leon et al. (2026) Table 2 form
+      ``pi R^2 sqrt(1 + (V/R)^2 tan^2 theta)`` (azimuth-independent).
+    * cylinder: ``pi Rx Ry + w(phi) H tan(theta)`` -- the horizontal top ellipse
+      plus the side-wall band, whose width ``w(phi) = 2 sqrt(Rx^2 sin^2 phi +
+      Ry^2 cos^2 phi)`` is the cross-section extent perpendicular to the beam's
+      horizontal direction (``H = scale_z``).  Reduces to ``pi R^2 + 2 R H
+      tan(theta)`` for a circular cylinder.
     * prism / polymesh: computed numerically from a single (non-periodic)
-      shadow trace over an enlarged bounding box; ``S(theta)`` is the beam-normal
-      silhouette (horizontal shadow / cos(theta)) of one isolated crown.
+      shadow trace over an enlarged bounding box; the horizontal ground shadow
+      of one isolated crown for the given ``(theta, phi)``.
 
     Notes
     -----
@@ -1081,18 +1102,38 @@ def silhouette_area(shape, scale_x, scale_y, scale_z, ray_zenith,
     """
     shape = _normalize_shape(shape)
     theta = _to_radians(ray_zenith, degrees)
+    azimuth = _to_radians(ray_azimuth, degrees)
 
     if shape == 'ellipsoid':
-        # Silhouette of an ellipsoid with horizontal radius R and vertical
-        # semi-axis b: S(theta) = pi R sqrt(R^2 cos^2 theta + b^2 sin^2 theta)
-        # (Norman & Welles 1983).  Reduces to pi R^2 for a sphere (b = R).
-        R = 0.5 * scale_x
-        b = 0.5 * scale_z
-        return pi * R * sqrt(R ** 2 * cos(theta) ** 2 + b ** 2 * sin(theta) ** 2)
+        # Horizontal ground-shadow area of a triaxial ellipsoid with semi-axes
+        # (Rx, Ry, Rz) for a beam at zenith ``theta`` and azimuth ``azimuth``.
+        # The beam-normal projection of an ellipsoid along a unit direction
+        # d = (dx, dy, dz) is
+        #     pi sqrt(Rx^2 Ry^2 dz^2 + Ry^2 Rz^2 dx^2 + Rx^2 Rz^2 dy^2)
+        # and the ground shadow is that divided by cos(theta) = dz.  For
+        # Rx == Ry this is azimuth-independent and reduces to the Ponce de Leon
+        # et al. (2026) Table 2 form; for a sphere it is pi R^2/cos(theta).
+        Rx = 0.5 * scale_x
+        Ry = 0.5 * scale_y
+        Rz = 0.5 * scale_z
+        dxh = sin(theta) * cos(azimuth)
+        dyh = sin(theta) * sin(azimuth)
+        dzh = cos(theta)
+        perp = pi * sqrt(Rx ** 2 * Ry ** 2 * dzh ** 2 +
+                         Ry ** 2 * Rz ** 2 * dxh ** 2 +
+                         Rx ** 2 * Rz ** 2 * dyh ** 2)
+        return perp / dzh
     if shape == 'cylinder':
-        R = 0.5 * scale_x
+        # (Elliptical) cylinder ground shadow: horizontal top ellipse pi Rx Ry
+        # (constant area) plus a side-wall rectangle of length H tan(theta) and
+        # width equal to the cross-section extent perpendicular to the beam's
+        # horizontal direction, w(phi) = 2 sqrt(Rx^2 sin^2 phi + Ry^2 cos^2 phi).
+        Rx = 0.5 * scale_x
+        Ry = 0.5 * scale_y
         H = scale_z
-        return pi * R * R + 2.0 * R * H * np.tan(theta)
+        width = 2.0 * sqrt(Rx ** 2 * sin(azimuth) ** 2 +
+                           Ry ** 2 * cos(azimuth) ** 2)
+        return pi * Rx * Ry + width * H * np.tan(theta)
 
     # prism / polymesh: non-periodic shadow trace over an enlarged box.
     faces = np.empty((0, 3, 3), dtype=np.float64)
@@ -1111,15 +1152,16 @@ def silhouette_area(shape, scale_x, scale_y, scale_z, ray_zenith,
         halfx, halfy = 0.5 * scale_x, 0.5 * scale_y
         z_top = scale_z
 
-    # Enlarge the launch box so the tilted shadow (shifted by z_top*tan(theta))
-    # fits with margin; the extra empty area cancels because we divide by the
-    # box area to get the hit fraction.
+    # Enlarge the launch box so the tilted shadow (shifted by up to
+    # z_top*tan(theta) in the beam's horizontal direction) fits in both x and y
+    # for any azimuth; the extra empty area cancels because we divide by the box
+    # area to get the hit fraction.
     shift = z_top * np.tan(theta)
     bbox_sizex = 2.0 * (halfx + abs(shift) + 0.01) * 1.001
     bbox_sizey = 2.0 * (halfy + abs(shift) + 0.01) * 1.001
 
-    dx = sin(theta) * 1.0  # azimuth 0
-    dy = 0.0
+    dx = sin(theta) * cos(azimuth)
+    dy = sin(theta) * sin(azimuth)
     dz = cos(theta)
 
     N = int(ceil(sqrt(nrays)))
@@ -1129,22 +1171,109 @@ def silhouette_area(shape, scale_x, scale_y, scale_z, ray_zenith,
         float(scale_x), float(scale_y), float(scale_z))
     # Rays launched over a horizontal grid along the beam direction: the set of
     # origins whose ray hits the crown is the crown shadow cast onto the launch
-    # plane, whose area is S(theta)/cos(theta).  Hence S(theta) = shadow*cos.
+    # plane.  Its area is the horizontal ground shadow S(theta) directly (the
+    # paper's Table 2 convention), so return it without a cos(theta) factor.
     horizontal_shadow = frac * bbox_sizex * bbox_sizey
-    return horizontal_shadow * cos(theta)
+    return horizontal_shadow
+
+
+def crown_volume(shape, scale_x, scale_y, scale_z, plyfile=''):
+    r"""Volume of a single crown (m^3).
+
+    Analytic for the primitive shapes; computed from the mesh (divergence
+    theorem) for ``polymesh``/``cone``.  The ``scale_*`` arguments are the full
+    crown extents in each axis, matching the convention used elsewhere in this
+    module (e.g. an ellipsoid has horizontal radius ``scale_x/2``).
+
+    * ellipsoid: ``(4/3) pi (scale_x/2)(scale_y/2)(scale_z/2)``
+    * cylinder: elliptical cross-section ``pi (scale_x/2)(scale_y/2)`` times
+      height ``scale_z``
+    * prism / box: ``scale_x scale_y scale_z``
+    * polymesh / cone: signed tetrahedron sum over the (scaled) triangle faces
+
+    Returns
+    -------
+    float
+        Crown volume (m^3).
+    """
+    shape = _normalize_shape(shape)
+
+    if shape == 'ellipsoid':
+        return float((4.0 / 3.0) * pi * (0.5 * scale_x) *
+                     (0.5 * scale_y) * (0.5 * scale_z))
+    if shape == 'cylinder':
+        return float(pi * (0.5 * scale_x) * (0.5 * scale_y) * scale_z)
+    if shape == 'prism':
+        return float(scale_x * scale_y * scale_z)
+
+    # polymesh / cone: sum signed volumes of tetrahedra formed by each triangle
+    # face and the origin (divergence theorem).  Vertices are scaled per axis
+    # to match the pathlengths/silhouette convention (vx = x * scale_x).
+    if len(plyfile) == 0:
+        raise Exception('Path to PLY file must be provided for polymesh volume.')
+    plydata = PlyData.read(plyfile)
+    faces = _extract_faces(plydata)  # (Nfaces, 3, 3)
+    scale = np.array([scale_x, scale_y, scale_z], dtype=np.float64)
+    v = faces * scale  # broadcast over the last axis
+    v0, v1, v2 = v[:, 0, :], v[:, 1, :], v[:, 2, :]
+    signed_six = np.einsum('ij,ij->i', v0, np.cross(v1, v2))
+    return float(abs(signed_six.sum()) / 6.0)
+
+
+def _crown_perp_width(shape, scale_x, scale_y, azimuth, plyfile=''):
+    r"""Full crown width perpendicular to the beam's horizontal azimuth (m).
+
+    This is the crown's cross-beam extent -- the ``w_perp`` used to set the
+    canopy interception ceiling.  ``azimuth`` is the beam azimuth in the crown
+    frame (radians, measured from +x, same convention as :func:`pathlengths`).
+    """
+    sa, ca = abs(sin(azimuth)), abs(cos(azimuth))
+    if shape == 'prism':
+        # Support width of the box footprint perpendicular to the beam.
+        return scale_x * sa + scale_y * ca
+    if shape in ('ellipsoid', 'cylinder'):
+        # Support width of the (elliptical) horizontal cross-section.
+        Rx, Ry = 0.5 * scale_x, 0.5 * scale_y
+        return 2.0 * sqrt(Rx * Rx * sa * sa + Ry * Ry * ca * ca)
+    # polymesh: perpendicular extent of the scaled vertices onto n=(-sin,cos).
+    plydata = PlyData.read(plyfile)
+    verts = plydata.elements[0].data
+    vx = np.asarray(verts['x'], dtype=float) * scale_x
+    vy = np.asarray(verts['y'], dtype=float) * scale_y
+    proj = -vx * sin(azimuth) + vy * cos(azimuth)
+    return float(proj.max() - proj.min())
 
 
 def canopy_interception(Gtheta, LAD, shape, scale_x, scale_y, scale_z,
                         ray_zenith, ray_azimuth, nrays, sr, sp, phi=None,
                         path_multiplier=1.0, absorptivity=1.0,
                         plyfile='', degrees=False, P_leaf=None):
-    r"""Canopy-level binomial interception probability (Bailey et al. 2020).
+    r"""Canopy-level binomial interception probability (closure-corrected).
 
     .. math::
-        s &= s_r \sin^2\phi + s_p \cos^2\phi \\
-        N_c &= S(\theta) / S(0) \\
-        P_c &= \frac{s^2}{s_r s_p}
-            \left[1 - \left(1 - \frac{S(0)}{s^2} P_{\mathrm{leaf}}\right)^{N_c}\right]
+        N_c &= S(\theta,\phi) / S(0) \\
+        C &= \min\!\left(1,\; w_\perp / s_\perp\right),\quad
+            s_\perp = s_r \cos^2\phi + s_p \sin^2\phi \\
+        P_c &= C\left[1 - \left(1 - \frac{S(0)}{C\, s_r s_p}
+            P_{\mathrm{leaf}}\right)^{N_c}\right]
+
+    This is the Bailey et al. (2020) binomial (Eq. 13) with a corrected
+    saturation ceiling.  The published form pre-multiplies by ``s^2/(s_r s_p)``
+    with ``s = s_r sin^2(phi) + s_p cos^2(phi)``, which pins ``P_c`` at an
+    azimuth-dependent geometric ceiling ``s_p/s_r`` (at ``phi=0``); against an
+    independent 3-D reference that ceiling is too low for a *closed* canopy
+    (crowns that fill the cell should intercept ~all light at grazing) and lets
+    ``P_c`` overshoot when ``s_r < s_p``.
+
+    Here the ceiling is instead the fraction of the beam cross-section the row
+    geometry can block -- the crown cross-beam width ``w_perp`` over the
+    perpendicular spacing ``s_perp`` -- and the footprint normalization is
+    carried inside the per-layer cover so the ceiling ``C`` does not disturb the
+    (validated) sparse limit ``P_c -> S(theta) P_leaf/(s_r s_p)``.  The nadir
+    limit (``N_c=1``) stays exact at ``S(0) P_leaf/(s_r s_p)``, and the model
+    reduces to Eq. 13 in the open-canopy (sparse) regime.  Row-induced
+    azimuthal anisotropy is retained -- it enters through ``C`` (via ``w_perp``,
+    ``s_perp``) and through the azimuth-aware ``S(theta, phi)``.
 
     Parameters
     ----------
@@ -1173,18 +1302,33 @@ def canopy_interception(Gtheta, LAD, shape, scale_x, scale_y, scale_z,
             nrays, path_multiplier=path_multiplier, absorptivity=absorptivity,
             plyfile=plyfile)
 
+    # S(0) is azimuth-independent (theta = 0); S(theta) uses the beam azimuth
+    # in the same crown frame as the per-crown ray tracing above, so Nc is the
+    # ground-shadow ratio for the actual beam direction (matters for prisms and
+    # triaxial ellipsoids; a no-op for horizontally circular crowns).
     S0 = silhouette_area(shape, scale_x, scale_y, scale_z, 0.0, nrays=nrays,
                          plyfile=plyfile)
-    Stheta = silhouette_area(shape, scale_x, scale_y, scale_z, theta,
+    Stheta = silhouette_area(shape, scale_x, scale_y, scale_z, theta, azimuth,
                              nrays=nrays, plyfile=plyfile)
     Nc = Stheta / S0
 
-    s = sr * sin(phi) ** 2 + sp * cos(phi) ** 2
-    inner = 1.0 - (S0 / s ** 2) * P_leaf
-    # Clamp to avoid tiny negative bases raised to fractional powers.
-    if inner < 0.0:
-        inner = 0.0
-    Pc = (s ** 2 / (sr * sp)) * (1.0 - inner ** Nc)
+    # Closure-corrected ceiling: the maximum interception the row geometry can
+    # produce for this beam is the crown cross-beam width w_perp over the
+    # perpendicular spacing s_perp (both azimuth-dependent).  w_perp is a crown
+    # property (beam azimuth in the crown frame); s_perp is a lattice property
+    # (beam azimuth relative to the rows).
+    w_perp = _crown_perp_width(shape, scale_x, scale_y, azimuth, plyfile)
+    s_perp = sr * cos(phi) ** 2 + sp * sin(phi) ** 2
+    C = min(1.0, w_perp / s_perp) if s_perp > 0.0 else 1.0
+    if C <= 0.0:
+        return 0.0
+
+    # Per-layer cover in the ceiling-scaled cell, pinned by the sparse limit so
+    # C does not perturb it; compounded over Nc crown layers, then scaled to C.
+    # At Nc=1 this is the exact nadir cover S(0) P_leaf/(sr sp); as Nc grows the
+    # bracket saturates and P_c -> C.
+    base = max(0.0, 1.0 - (S0 / (C * sr * sp)) * P_leaf)
+    Pc = C * (1.0 - base ** Nc)
     return float(min(max(Pc, 0.0), 1.0))
 
 

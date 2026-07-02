@@ -19,8 +19,10 @@ def test_absorbed_bounded(pld_module):
 
 
 def test_ground_reflection_adds_energy(pld_module):
-    Q0 = _abs(pld_module, rho_s=0.0)
-    Q1 = _abs(pld_module, rho_s=0.3)
+    # Spacing must exceed the crown (SCALE=10) so the canopy is not fully
+    # closed; otherwise no light reaches the ground and rho_s cannot add energy.
+    Q0 = _abs(pld_module, rho_s=0.0, sr=18.0, sp=16.0, theta_deg=45.0)
+    Q1 = _abs(pld_module, rho_s=0.3, sr=18.0, sp=16.0, theta_deg=45.0)
     assert Q1 > Q0
 
 

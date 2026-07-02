@@ -124,7 +124,7 @@ def run_model(params):
 
     # --- crown interception components (always) ---------------------------
     results['S_theta'] = float(pld.silhouette_area(
-        shape, sx, sy, sz, zenith, nrays=nrays, plyfile=plyfile,
+        shape, sx, sy, sz, zenith, azimuth, nrays=nrays, plyfile=plyfile,
         degrees=True))
     results['S_zero'] = float(pld.silhouette_area(
         shape, sx, sy, sz, 0.0, nrays=nrays, plyfile=plyfile,
@@ -140,6 +140,13 @@ def run_model(params):
     results['P_canopy'] = float(pld.canopy_interception(
         Gtheta, LAD, shape, sx, sy, sz, zenith, azimuth, nrays, sr, sp,
         phi=phi, plyfile=plyfile, degrees=True))
+
+    # --- leaf area index (leaf area per unit ground area) -----------------
+    # LAI = LAD * crown_volume / (sr * sp): total leaf area of one crown
+    # (LAD * volume) spread over the ground area it occupies (sr * sp).
+    crown_vol = float(pld.crown_volume(shape, sx, sy, sz, plyfile=plyfile))
+    results['crown_volume'] = crown_vol
+    results['LAI'] = crown_vol * LAD / (sr * sp)
 
     # --- scattering / absorbed fraction (three-mode) ----------------------
     if include_scatter:
@@ -562,6 +569,7 @@ def _build_app():
             '  Intercepted per crown       : {:.1%}'.format(results['P_leaf']),
             '  Leaf area sunlit            : {:.1%}'.format(
                 results['sunlit_fraction']),
+            '  Leaf area index (LAI)       : {:.3f}'.format(results['LAI']),
         ]
         if 'absorbed' in results:
             lines += [
@@ -664,14 +672,18 @@ def _build_app():
         centers = _np.array(centers)
 
         # Spacing annotations along the two lattice directions, offset to a side.
-        # sp arrow between two in-row neighbours, shifted one row across.
+        # sp arrow between two in-row neighbours, shifted one row across.  Nudge
+        # the arrow slightly right (+x) and its label slightly left (-x), in
+        # fixed screen coordinates, so the two do not overlap.
+        sp_nudge = _np.array([0.28 * max(sp, sr), 0.0])
         base_sp = -1.9 * across * sr
-        config_ax.annotate('', xy=tuple(base_sp + 0.5 * sp * along),
-                           xytext=tuple(base_sp - 0.5 * sp * along),
+        config_ax.annotate('', xy=tuple(base_sp + 0.5 * sp * along + sp_nudge),
+                           xytext=tuple(base_sp - 0.5 * sp * along + sp_nudge),
                            arrowprops=dict(arrowstyle='<->', color='#555'))
         # Offset the label further out along the same perpendicular so it does
         # not sit on the arrow or the crowns.
-        config_ax.text(*(base_sp - 0.35 * across * sr), 'sp={:g} m'.format(sp),
+        config_ax.text(*(base_sp - 0.35 * across * sr - sp_nudge),
+                       'sp={:g} m'.format(sp),
                        ha='center', va='center', fontsize=8, color='#555')
         # sr arrow between two rows, shifted one plant along.
         base_sr = -1.9 * along * sp

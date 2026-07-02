@@ -7,17 +7,45 @@
 
 ## Quick start
 
-**Just want to run it?** Launch the graphical interface — enter a few crown/canopy inputs, press
-**Run model**, and read the fraction of light the canopy intercepts straight off the top of the
-window:
+First, clone the repository and enter it:
+
+```bash
+git clone https://github.com/PlantSimulationLab/pathlengthdistribution.git
+cd pathlengthdistribution
+```
+
+**Just want to run it?** The most reliable way — on any OS, with nothing to configure — is
+[`uv`](https://docs.astral.sh/uv/). Install it once:
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Windows (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+then launch the graphical interface with a single command (the first run downloads a suitable
+Python and the dependencies automatically, then caches them):
+
+```bash
+uv run --with-requirements requirements.txt pathlength_ui.py
+```
+
+Enter a few crown/canopy inputs, press **Run model**, and read the fraction of light the canopy
+intercepts straight off the top of the window. `uv` fetches a self-contained Python that bundles a
+modern Tk, which sidesteps the broken system/Homebrew Tk builds that otherwise make the GUI crash
+or render blank on macOS.
+
+**Already have a Tk-enabled Python?** You can install the dependencies and run it directly:
 
 ```bash
 pip install -r requirements.txt
 python pathlength_ui.py
 ```
 
-(On macOS you need a Python with Tk 8.6+; see [Graphical interface](#graphical-interface) for the
-one-line check and the fix if the window opens blank.)
+(On macOS the system, Xcode, and Homebrew Pythons often ship a broken Tk — if the window crashes or
+opens blank, use the `uv` command above; see [Graphical interface](#graphical-interface) for
+details.)
 
 **Prefer to script it?** Import the module and call it directly:
 
@@ -26,7 +54,7 @@ import pathlengthdistribution as pld
 
 # Fraction of incident light an ellipsoidal-crown orchard row intercepts.
 P = pld.canopy_interception(
-    Gtheta=0.5, LAD=1.0, shape='ellipsoid',
+    Gtheta=0.5, LAD=3.0, shape='ellipsoid',
     scale_x=3.0, scale_y=5.0, scale_z=6.0,
     ray_zenith=30.0, ray_azimuth=0.0, nrays=5000,
     sr=6.0, sp=4.0, degrees=True)
@@ -244,21 +272,37 @@ and embeds a `matplotlib` plot, so it needs a Tk-enabled Python and the `matplot
 
 ### Launching
 
-Install the dependencies and run the script:
+The most reliable way to launch the GUI on any platform is with [`uv`](https://docs.astral.sh/uv/),
+which fetches a self-contained Python (bundling a modern Tk and its own expat) plus the
+dependencies for you — nothing else to install or configure:
+
+```bash
+uv run --with-requirements requirements.txt pathlength_ui.py
+```
+
+If you would rather use your own interpreter, install the dependencies and run the script directly.
+This needs a **Python with a working Tk 8.6+ (Tk 9 recommended)**:
 
 ```bash
 pip install -r requirements.txt
 python pathlength_ui.py
 ```
 
-> **macOS note — use a Python with Tk 8.6+.** The Tk 8.5.9 that ships with Apple's system /
-> Xcode Python 3.9 is broken on modern macOS and renders a **blank window that opens behind other
-> apps**. Check your interpreter with
-> `python -c "import tkinter; print(tkinter.Tcl().eval('info patchlevel'))"` — if it prints
-> `8.5.9`, run the GUI from a Python built against Tk 8.6 instead (a python.org installer, a
-> Homebrew `python-tk` build, or a conda env — e.g.
-> `conda create -n pld python=3.12 numpy numba scipy matplotlib && conda activate pld && pip install plyfile`).
-> Only the GUI needs the newer Tk; the library and test suite work on any supported interpreter.
+> **macOS note — the bundled and Homebrew Pythons often ship a broken Tk.**
+> - Apple's system / Xcode **Python 3.9** links **Tk 8.5.9**. On macOS 26+ this *crashes on launch*
+>   with `macOS 26 (2602) or later required, have instead 16 (1602)` (an abort trap — the old
+>   interpreter misreports the OS version to Tk); on older macOS it renders a **blank window behind
+>   other apps**.
+> - **Homebrew** `python-tk@3.12/3.13` is currently broken on macOS 26 too: a `pyexpat` symbol
+>   mismatch against the system `libexpat` stops `pip` from even bootstrapping.
+>
+> The dependable fix is the `uv` command above. If you prefer to bring your own interpreter, use a
+> **python.org** installer (bundles a working Tk 8.6/9) or a **conda** env
+> (`conda create -n pld python=3.12 tk numpy numba scipy matplotlib && conda activate pld && pip install plyfile`).
+> Verify any interpreter with
+> `python -c "import tkinter; tkinter.Tk(); print(tkinter.TkVersion)"` — it should briefly open a
+> window and print `8.6` or `9.0` without crashing. Only the GUI needs Tk; the library and test
+> suite run on any supported interpreter.
 
 ### Using the window
 
